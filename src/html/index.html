@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>JS Bin</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.2.13/semantic.min.css">
+  <script src="https://code.jquery.com/jquery-3.0.0.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.2.13/semantic.min.js"></script>
+  <style>
+    #apiKey {
+      width: 500px;
+      margin-top: 10px;
+    }
+
+    .ui.select {
+      margin-top: 10px;
+    }
+
+    #pane {
+      border: 1px solid;
+      padding: 10px;
+    }
+
+    #log {
+      min-height: 50px;
+      border-top: 1px solid;
+      margin-top: 10px;
+      max-height: 500px;
+      overflow: auto;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="ui container">
+    <div class="row">
+      <!-- <div class="ui input five">
+        <input type="text" id="apiKey" placeholder="API Key">
+      </div> -->
+      <br />
+      <div class="ui select" style="width: 20%">
+        <select class="ui fluid dropdown" id="deployments">
+          <option>select</option>
+        </select>
+      </div>
+    </div>
+
+    <br>
+    <div class="ui select" id="pane" style="display:none;">
+      <div id="buttons">
+        <button class="ui red basic button" id="deploy">Deploy</button>
+        <button class="ui orange basic button" id="restart">Restart</button>
+      </div>
+      <pre id="log">
+      </pre>
+    </div>
+  </div>
+  <script type="text/javascript">
+
+    $(function () {
+      const baseURL = '/deploy';
+      const deploymentsSelect = $('#deployments');
+      const apiKeyInput = $('#apiKey');
+      function getKey() {
+        return sessionStorage.getItem('key');
+      }
+
+      function ajax(url, data) {
+        return $.ajax({
+          url: `${baseURL}${url}`,
+          dataType: 'json',
+          headers: {
+            'Authorization': getKey()
+          },
+          data
+        });
+      }
+
+      (async function () {
+        try {
+          const d = await ajax(`/getDeployments`);
+          deploymentsSelect.empty();
+          deploymentsSelect.append($('<option>', {
+            text: 'select'
+          }));
+          for (const name of d) {
+            deploymentsSelect.append($('<option>', {
+              value: name,
+              text: name
+            }));
+          }
+        } catch (err) {
+          throw err;
+        }
+      })();
+
+      let deployment = '';
+      deploymentsSelect.on('change', function (e) {
+        deployment = this.value;
+        if (deployment) {
+          $('#pane').show();
+        } else {
+          $('#pane').hide();
+        }
+      });
+
+      const logContainer = $('#log');
+      $('#pane').on('click', '#buttons button', async function (e) {
+        console.log('eee', e, this);
+        $('select,button').attr('disabled', true);
+        logContainer.html('')
+        const obj = await ajax(`/${this.id}/${deployment}`);
+        const id = obj.id;
+        const project = obj.project;
+
+        const interval = setInterval(async () => {
+          const log = await ajax(`/getLogs/${project}/${id}`);
+          logContainer.html(log.logArr.join(''))
+          
+          if (log.state === 1) {
+            clearInterval(interval);
+            $('select,button').attr('disabled', false);
+            alert('Deployment done !!!')
+          }
+        }, 1000);
+      });
+    });
+
+
+
+
+  </script>
+</body>
+
+</html>
