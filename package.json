@@ -16,9 +16,15 @@
   "dependencies": {
     "axios": "^0.17.0",
     "bluebird": "^3.5.1",
+    "dockerode": "^2.5.3",
     "file-type": "^7.2.0",
+    "lodash.find": "^4.6.0",
+    "lodash.map": "^4.6.0",
     "memoizee": "^0.4.11",
-    "micro-fame": "^0.5.1"
+    "micro-fame": "^0.6.2",
+    "mz": "^2.7.0",
+    "node-pty": "^0.7.4",
+    "ws": "^3.3.2"
   },
   "devDependencies": {
     "ava": "^0.22.0",

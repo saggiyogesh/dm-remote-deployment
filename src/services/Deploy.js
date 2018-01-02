@@ -1,11 +1,26 @@
 const { RestService, Remote } = require('micro-fame');
-const fs = require('fs');
+const fs = require('mz/fs');
 const path = require('path');
+const map = require('lodash.map');
+const find = require('lodash.find');
 const { BASE_DEPLOYMENT_DIR } = process.env;
-const indexHTML = fs.readFileSync(path.resolve(__dirname, '../html/index.html'));
-const exec = require('../lib/exec');
+
+const indexHTML = require('fs').readFileSync(path.resolve(__dirname, '../html/index.html'));
+
+const { newTerm, destroyTerm } = require('../lib/terminal');
+const { getContainers } = require('../lib/docker');
 console.log('BASE_DEPLOYMENT_DIR', BASE_DEPLOYMENT_DIR);
-const _logs = {};
+
+const config = require(`${BASE_DEPLOYMENT_DIR}/config`);
+console.log('config', config);
+
+const SCRIPTS_DIR = path.resolve(__dirname, '../scripts');
+
+function getDeploymentDirPath(deployment) {
+  const dObj = find(config.deployments, { name: deployment });
+  const deploymentDir = dObj.dir || deployment;
+  return `${BASE_DEPLOYMENT_DIR}/${deploymentDir}`;
+}
 
 @RestService()
 class Deploy {
@@ -17,30 +32,105 @@ class Deploy {
 
   @Remote({ path: '/getDeployments' })
   async getDeployments() {
-    return ['doit-flipbook', 'doit-assessment'];
+    return map(config.deployments, 'name');
   }
 
-  @Remote({ path: '/deploy/:project' })
-  async buildDeploy(project) {
-    console.log('deploy started', project);
-    const id = Date.now();
-    const log = { state: 0, logArr: [] };
-    _logs[id] = log;
-    const deploymentDir = path.join(BASE_DEPLOYMENT_DIR, project);
-    console.log('deploymentDir', deploymentDir);
-    exec(deploymentDir, log);
-    return { id, project };
-  }
-
-  @Remote({ path: '/getLogs/:project/:id' })
-  async getLogs(project, id) {
-    const log = _logs[id];
-    if (log.state === 1) {
-      setTimeout(() => {
-        delete _logs[id];
-      }, 1000);
+  @Remote({
+    path: '/getTerminal/:cols/:rows',
+    args: {
+      deployment: ({ query: { deployment } }) => deployment,
+      cmd: ({ query: { cmd } }) => cmd,
+      containerId: ({ query: { containerId } }) => containerId
     }
-    return log;
+  })
+  async getTerminal(cols, rows, deployment, cmd, containerId) {
+    console.log('in terminal', cols, rows, deployment, cmd);
+    let env = {};
+    let baseDir = deployment && getDeploymentDirPath(deployment);
+    switch (cmd) {
+      case 'deploy':
+        cmd = 'sh deploy.sh && exit\r';
+        break;
+      case 'showContainerLogs':
+        cmd = `sh ${SCRIPTS_DIR}/logs.sh && exit\r`;
+        env = {
+          DM: deployment,
+          CID: containerId
+        };
+        break;
+
+      case 'containerTerminal':
+        cmd = `sh ${SCRIPTS_DIR}/exec.sh && exit\r`;
+        env = {
+          DM: deployment,
+          CID: containerId
+        };
+        break;
+
+      case 'containerStats':
+        cmd = `sh ${SCRIPTS_DIR}/stats.sh && exit\r`;
+        env = {
+          DM: deployment,
+          CID: containerId
+        };
+        break;
+
+      case 'adminTerm':
+        baseDir = BASE_DEPLOYMENT_DIR;
+        break;
+
+      default:
+        break;
+    }
+
+    const term = newTerm({ cols, rows, baseDir, cmd, env });
+    return term.pid.toString();
+  }
+
+  @Remote({ path: '/destroyTerm/:termId' })
+  async destroyTerm(termId) {
+    console.log('destroyTerm', termId);
+    destroyTerm(termId);
+    return { status: true };
+  }
+
+  @Remote({
+    path: '/getTerminal/:deployment'
+  })
+  async getContainers(deployment) {
+    console.log('getcontainer', deployment);
+    return await getContainers({ name: deployment });
+  }
+
+  @Remote({
+    path: '/getComposeFile/:deployment'
+  })
+  async getComposeFile(deployment) {
+    console.log('getComposeFile', deployment);
+    return await fs.readFile(`${getDeploymentDirPath(deployment)}/docker-compose.yml`, 'utf-8');
+  }
+
+  @Remote({
+    path: '/saveComposeFile/:deployment',
+    method: 'post',
+    args: {
+      content: ({ body: { content } }) => content
+    }
+  })
+  async saveComposeFile(deployment, content) {
+    console.log('saveComposeFile', deployment);
+    await fs.writeFile(`${getDeploymentDirPath(deployment)}/docker-compose.yml`, content, 'utf8');
+    return { deployment };
+  }
+
+  @Remote({
+    path: '/isAdmin',
+    args: {
+      isAdmin: ({ isAdmin }) => isAdmin
+    }
+  })
+  async isAdmin(isAdmin) {
+    return { isAdmin };
   }
 };
 

@@ -6,8 +6,19 @@
   <meta name="viewport" content="width=device-width">
   <title>Deployment</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.2.13/semantic.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/2.9.1/xterm.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/alertifyjs@1.11.0/build/css/alertify.min.css" />
+
   <script src="https://code.jquery.com/jquery-3.0.0.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/2.9.1/xterm.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/2.9.1/addons/fit/fit.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/2.9.1/addons/attach/attach.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.2.13/semantic.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.4/lodash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.2.9/ace.js"></script>
+  <script src="https://cdn.rawgit.com/nodeca/js-yaml/bee7e998/dist/js-yaml.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/alertifyjs@1.11.0/build/alertify.min.js"></script>
+
   <style>
     #apiKey {
       width: 500px;
@@ -19,63 +30,191 @@
     }
 
     #pane {
-      border: 1px solid;
+      /* border: 1px solid; */
       padding: 10px;
     }
 
-    #log {
+    .log {
       min-height: 50px;
       border-top: 1px solid;
       margin-top: 10px;
       max-height: 500px;
       overflow: auto;
     }
+
+    .c-logs,
+    .c-term,
+    .c-stats {
+      cursor: pointer;
+    }
+
+    .no-pe {
+      pointer-events: none;
+    }
+
+    #editor {
+      position: absolute;
+      top: 63px;
+      right: 0;
+      bottom: 66px;
+      left: 0;
+    }
+
+    #editModal .content {
+      min-height: 600px;
+    }
   </style>
 </head>
 
 <body>
+  <div class="ui modal" id="containerModal">
+    <div class="header" id="modalHeader">
+      Logs
+    </div>
+    <div class="content">
+      <div id="modelTerm"></div>
+    </div>
+    <div class="actions">
+      <div class="ui black deny button">
+        Close
+      </div>
+    </div>
+  </div>
+
+  <div class="ui fullscreen modal" id="editModal">
+    <div class="header" id="modalHeader">
+      Update docker-compose.yml
+    </div>
+    <div class="content">
+      <div id="editor"></div>
+    </div>
+    <div class="actions">
+      <div class="ui black deny button">
+        Cancel
+      </div>
+      <div class="ui positive right labeled icon button">
+        Save
+        <i class="checkmark icon"></i>
+      </div>
+    </div>
+  </div>
+
+  <div class="ui container" style="padding-top: 20px; padding-bottom:10px;">
+    <h1 class="ui dividing header">Remote Deployment</h1>
+  </div>
+
   <div class="ui container">
-    <div class="row">
-      <!-- <div class="ui input five">
-        <input type="text" id="apiKey" placeholder="API Key">
-      </div> -->
-      <br />
-      <div class="ui select" style="width: 20%">
-        <select class="ui fluid dropdown" id="deployments">
-          <option>select</option>
-        </select>
+    <div class="ui grid">
+      <div class="column five wide">
+        <div class="ui segment green">
+          <select class="ui fluid dropdown" id="deployments">
+            <option>select</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="column four wide" id="adminTermPanel" style="display: none;">
+        <div class="ui segment red">
+          <button class="ui inverted blue button fluid" id="adminTerm">Admin Terminal</button>
+        </div>
       </div>
     </div>
 
-    <br>
-    <div class="ui select" id="pane" style="display:none;">
-      <div id="buttons">
-        <button class="ui red basic button" id="deploy">Deploy</button>
-        <button class="ui orange basic button" id="restart">Restart</button>
+    <div class="ui segment raised yellow" id="pane" style="display:none;">
+      <div id="buttons" class="ui inverted segment">
+        <button class="ui inverted blue  button" id="deploy">Deploy</button>
+        <button class="ui inverted green  button" id="update">Update</button>
+        <button class="ui inverted yellow  button" id="containers">Containers</button>
       </div>
-      <pre id="log">
-      </pre>
+      <div id="deployLog" class="log" style="min-height: 250px"></div>
     </div>
   </div>
   <script type="text/javascript">
-
     $(function () {
+      const protocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+      const socketURL = protocol + location.hostname + ((location.port) ? (':' + location.port) : '');
+
       const baseURL = '/deploy';
       const deploymentsSelect = $('#deployments');
-      const apiKeyInput = $('#apiKey');
-      function getKey() {
-        return sessionStorage.getItem('key');
+      const apiKey = sessionStorage.getItem('key');
+      let isAdmin = false;
+
+      function ajax(url, data, method = 'GET') {
+        method = method.toUpperCase();
+        const obj = {
+          url: `${baseURL}${url}`,
+          headers: {
+            'Authorization': apiKey
+          },
+          contentType: 'application/json',
+          data,
+          method: method.toUpperCase()
+        };
+        if (method === 'POST') {
+          obj.data = JSON.stringify(data);
+        }
+        return $.ajax(obj);
       }
 
-      function ajax(url, data) {
-        return $.ajax({
-          url: `${baseURL}${url}`,
-          dataType: 'json',
-          headers: {
-            'Authorization': getKey()
-          },
-          data
+      async function createTerm({ containerId, data, onTermClosed = $.noop }) {
+        const term = new Terminal({
+          cursorBlink: true,
+          scrollback: 1000,
+          tabStopWidth: 8
         });
+
+        term.open(document.getElementById(containerId));
+        // term.fit();
+        term.focus();
+
+        const { cols, rows } = term;
+        console.log('colsrows', cols, rows);
+        const processId = await ajax(`/getTerminal/${150}/${rows}`, data);
+        console.log('terminsal---', term);
+
+        const socket = new WebSocket(`${socketURL}/${processId}?token=${apiKey}`);
+        console.log(socket)
+
+        socket.onopen = function () {
+          console.log('open-----');
+          term.attach(socket);
+          term._initialized = true;
+        };
+
+        socket.onerror = function () {
+          console.log('onerror', arguments);
+        };
+
+        socket.onclose = function (e) {
+          console.log('onclose', arguments);
+          const { reason } = e;
+          if (reason === 'TERM_CLOSED') {
+            // term.destroy();
+            onTermClosed();
+          }
+        };
+
+        term._pid = processId;
+        return term;
+      }
+
+      function getContainerTable(data) {
+        const headers = ['ID', 'Name', 'State', 'Image', 'Actions'];
+
+        return `
+        <table class="ui striped selectable inverted table">
+          <thead>
+            <tr>
+              ${headers.map(h => `<th>${h}</th>`)}
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(row => `<tr data-name="${row[1]}" data-id="${row[0]}">
+              ${row.map(col => `<td>${col}</td>`)}
+            </tr>`)}
+          </tbody>
+        </table>  
+       `;
       }
 
       (async function () {
@@ -83,7 +222,8 @@
           const d = await ajax(`/getDeployments`);
           deploymentsSelect.empty();
           deploymentsSelect.append($('<option>', {
-            text: 'select'
+            text: 'select',
+            value: ''
           }));
           for (const name of d) {
             deploymentsSelect.append($('<option>', {
@@ -91,14 +231,26 @@
               text: name
             }));
           }
+
+          const a = await ajax('/isAdmin');
+          isAdmin = a.isAdmin;
+          if (isAdmin) {
+            $('#adminTermPanel').show();
+          } else {
+            $('#adminTermPanel').remove();
+          }
+          console.log('aaaa', a);
         } catch (err) {
           throw err;
         }
       })();
 
+      const mainContainer = $('#deployLog');
       let deployment = '';
       deploymentsSelect.on('change', function (e) {
         deployment = this.value;
+        console.log('deployment', deployment);
+        mainContainer.empty();
         if (deployment) {
           $('#pane').show();
         } else {
@@ -106,25 +258,146 @@
         }
       });
 
-      const logContainer = $('#log');
+      $('body').on('click', '#adminTerm', async function (e) {
+        let term;
+        $("#containerModal").modal({
+          onHidden: async function () {
+            term.destroy();
+            term.detach();
+            await ajax(`/destroyTerm/${term._pid}`);
+          }
+        }).modal('show');
+
+        const data = { cmd: 'adminTerm' };
+        term = await createTerm({
+          containerId: 'modelTerm', data,
+          onTermClosed: function () {
+
+          }
+        });
+
+        setTimeout(function () {
+          $("#containerModal").modal('refresh');
+        }, 200);
+      });
+      //containers logs & terminal
+      $('#pane').on('click', '.c-logs,.c-term,.c-stats', async function (e) {
+        console.log('cont-actions', e, this);
+        const isLogs = $(this).hasClass('c-logs');
+
+        const tr = $(this).closest('tr');
+        const containerId = tr.data('id');
+        const containerName = tr.data('name');
+        let term;
+        $("#containerModal").modal({
+          onHidden: async function () {
+            term.destroy();
+            term.detach();
+            await ajax(`/destroyTerm/${term._pid}`);
+          }
+        }).modal('show');
+
+        let cmd, title;
+        if ($(this).hasClass('c-logs')) {
+          cmd = 'showContainerLogs';
+          title = 'Logs';
+        } else if ($(this).hasClass('c-term')) {
+          cmd = 'containerTerminal';
+          title = 'Terminal';
+        } else {
+          cmd = 'containerStats';
+          title = 'Stats'
+        }
+
+        const data = { containerId, cmd, deployment };
+        term = await createTerm({
+          containerId: 'modelTerm', data,
+          onTermClosed: function () {
+
+          }
+        });
+
+        // isLogs && $(term.element).addClass('no-pe')
+
+        setTimeout(function () {
+          $("#containerModal").modal('refresh');
+        }, 200);
+
+        $("#containerModal").find('.header').html(`${title}: ${name}`);
+      });
+
       $('#pane').on('click', '#buttons button', async function (e) {
         console.log('eee', e, this);
+        mainContainer.empty();
         $('select,button').attr('disabled', true);
-        logContainer.html('')
-        const obj = await ajax(`/${this.id}/${deployment}`);
-        const id = obj.id;
-        const project = obj.project;
+        switch (this.id) {
+          case 'deploy':
+            const data = { deployment, cmd: this.id };
+            await createTerm({
+              containerId: 'deployLog', data,
+              onTermClosed: function () {
+                $('select,button').attr('disabled', false);
+                alert('Deployment done !!!');
+              }
+            })
+            break;
 
-        const interval = setInterval(async () => {
-          const log = await ajax(`/getLogs/${project}/${id}`);
-          logContainer.html(log.logArr.join(''))
-          
-          if (log.state === 1) {
-            clearInterval(interval);
-            $('select,button').attr('disabled', false);
-            alert('Deployment done !!!')
-          }
-        }, 1000);
+          case 'containers':
+            const list = await ajax(`/getTerminal/${deployment}`);
+
+            console.log('containrs', list);
+            const tableData = list.map(d => {
+              const { Id, Names, State, Image } = d;
+              const arr = [Id.substr(0, 12), Names[0].split('/')[1], State, Image,
+                `<i class="info circle icon c-logs" title="Show Logs"></i> 
+                <i class="terminal icon c-term" title="Terminal"></i>
+                <i class="area chart icon c-stats" title="Stats"></i>`
+
+              ];
+              return arr;
+            });
+            mainContainer.append(getContainerTable(tableData))
+            break;
+
+          case 'update':
+            let editor;
+            $("#editModal").modal({
+              onApprove: function () {
+                const content = editor.getValue();
+                try {
+                  jsyaml.load(content);
+                } catch (err) {
+                  console.log('yaml err', err);
+                  alertify.error('YAML Parsing error: ' + err.message);
+                  return false;
+                }
+
+                ajax(`/saveComposeFile/${deployment}`, { content }, 'post');
+
+              },
+              onHidden: function () {
+              },
+              onVisible: async function () {
+                ajax(`/getComposeFile/${deployment}`).then(c => {
+                  editor.setValue(c);
+                });
+                editor = ace.edit("editor");
+                editor.setTheme("ace/theme/terminal");
+                editor.getSession().setMode("ace/mode/yaml");
+              }
+            }).modal('show');
+
+            setTimeout(function () {
+              $("#editModal").modal('refresh');
+            }, 200);
+
+            break;
+
+          default:
+            break;
+        }
+
+        $('select,button').attr('disabled', false);
       });
     });
 
