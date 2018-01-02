@@ -261,6 +261,7 @@
       $('body').on('click', '#adminTerm', async function (e) {
         let term;
         $("#containerModal").modal({
+          closable: false,
           onHidden: async function () {
             term.destroy();
             term.detach();
@@ -290,6 +291,7 @@
         const containerName = tr.data('name');
         let term;
         $("#containerModal").modal({
+          closable: false,
           onHidden: async function () {
             term.destroy();
             term.detach();
