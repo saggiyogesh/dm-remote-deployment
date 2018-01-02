@@ -17,7 +17,7 @@ exports.newTerm = function ({ cols = 150, rows = 24, cmd = '', baseDir, env = {}
   terminals[term.pid] = term;
   logs[term.pid] = '';
   term.on('data', function (data) {
-    console.log('-----------', data);
+    // console.log('-----------', data);
     logs[term.pid] += data;
   });
 

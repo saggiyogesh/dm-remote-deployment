@@ -3,15 +3,16 @@ const fs = require('mz/fs');
 const path = require('path');
 const map = require('lodash.map');
 const find = require('lodash.find');
+const yaml = require('js-yaml');
 const { BASE_DEPLOYMENT_DIR } = process.env;
-
-const indexHTML = require('fs').readFileSync(path.resolve(__dirname, '../html/index.html'));
+const { readFileSync } = require('fs');
+const indexHTML = readFileSync(path.resolve(__dirname, '../html/index.html'));
 
 const { newTerm, destroyTerm } = require('../lib/terminal');
 const { getContainers } = require('../lib/docker');
 console.log('BASE_DEPLOYMENT_DIR', BASE_DEPLOYMENT_DIR);
 
-const config = require(`${BASE_DEPLOYMENT_DIR}/config`);
+const config = yaml.safeLoad(readFileSync(`${BASE_DEPLOYMENT_DIR}/config.yml`, 'utf8'));
 console.log('config', config);
 
 const SCRIPTS_DIR = path.resolve(__dirname, '../scripts');
@@ -40,10 +41,11 @@ class Deploy {
     args: {
       deployment: ({ query: { deployment } }) => deployment,
       cmd: ({ query: { cmd } }) => cmd,
-      containerId: ({ query: { containerId } }) => containerId
+      containerId: ({ query: { containerId } }) => containerId,
+      isAdmin: ({ isAdmin }) => isAdmin
     }
   })
-  async getTerminal(cols, rows, deployment, cmd, containerId) {
+  async getTerminal(cols, rows, deployment, cmd, containerId, isAdmin) {
     console.log('in terminal', cols, rows, deployment, cmd);
     let env = {};
     let baseDir = deployment && getDeploymentDirPath(deployment);
@@ -76,6 +78,9 @@ class Deploy {
         break;
 
       case 'adminTerm':
+        if (!isAdmin) {
+          throw new Error('Admin is permitted for adminTerm');
+        }
         baseDir = BASE_DEPLOYMENT_DIR;
         break;
 
