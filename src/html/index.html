@@ -358,7 +358,8 @@
               ];
               return arr;
             });
-            mainContainer.append(getContainerTable(tableData))
+            mainContainer.append(getContainerTable(tableData));
+            $('select,button').attr('disabled', false);
             break;
 
           case 'update':
@@ -378,6 +379,7 @@
 
               },
               onHidden: function () {
+                $('select,button').attr('disabled', false);
               },
               onVisible: async function () {
                 ajax(`/getComposeFile/${deployment}`).then(c => {
